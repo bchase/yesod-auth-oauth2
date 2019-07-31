@@ -46,6 +46,7 @@ import Yesod.Auth.OAuth2.Nylas
 import Yesod.Auth.OAuth2.Salesforce
 import Yesod.Auth.OAuth2.Slack
 import Yesod.Auth.OAuth2.Spotify
+import Yesod.Auth.OAuth2.StripeConnect
 import Yesod.Auth.OAuth2.Upcase
 
 data App = App
@@ -143,6 +144,7 @@ mkFoundation = do
         , loadPlugin oauth2Slack "SLACK"
         , loadPlugin (oauth2Spotify []) "SPOTIFY"
         , loadPlugin oauth2Upcase "UPCASE"
+        , loadPlugin oauth2StripeConnect "STRIPE"
         ]
 
     return App{..}

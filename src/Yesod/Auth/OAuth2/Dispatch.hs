@@ -19,11 +19,14 @@ import qualified Data.Text as T
 import Data.Text.Encoding (encodeUtf8)
 import Network.HTTP.Conduit (Manager)
 import Network.OAuth.OAuth2
+-- import Network.OAuth.OAuth2.Internal (OAuth2Token)
 import System.Random (newStdGen, randomRs)
 import URI.ByteString.Extension
+import URI.ByteString (URIRef (uriAuthority), Authority (authorityHost), Host (hostBS))
 import Yesod.Auth hiding (ServerError)
 import Yesod.Auth.OAuth2.ErrorResponse
 import Yesod.Auth.OAuth2.Exception
+import qualified Yesod.Auth.OAuth2.StripeConnect.StripeToken as StripeToken
 import Yesod.Core hiding (ErrorResponse)
 
 -- | How to take an @'OAuth2Token'@ and retrieve user credentials
@@ -66,10 +69,9 @@ dispatchCallback name oauth2 getCreds = do
     onErrorResponse errInvalidOAuth
     code <- requireGetParam "code"
     manager <- authHttpManager
-    oauth2' <- withCallbackAndState name oauth2 csrf
-    token <- errLeft $ fetchAccessToken manager oauth2' $ ExchangeToken code
-    creds <- errLeft $ tryFetchCreds $ getCreds manager token
+    creds <- fetchCreds oauth2 csrf code manager
     setCredsRedirect creds
+
   where
     errLeft :: Show e => IO (Either e a) -> AuthHandler m a
     errLeft = either (errInvalidOAuth . unknownError . tshow) pure <=< liftIO
@@ -78,6 +80,24 @@ dispatchCallback name oauth2 getCreds = do
     errInvalidOAuth err = do
         $(logError) $ "OAuth2 error (" <> name <> "): " <> tshow err
         redirectMessage $ "Unable to log in with OAuth2: " <> erUserMessage err
+
+    fetchCreds oa csrf code manager = do
+      let mHost = (hostBS . authorityHost) <$> (uriAuthority . oauthAccessTokenEndpoint) oa
+
+      if mHost == (Just "connect.stripe.com")
+        then fetchStripeConnectCreds oa csrf code manager
+        else fetchCreds' oa csrf code manager
+
+    fetchCreds' oa csrf code manager = do
+      oa' <- withCallbackAndState name oa csrf
+      token <- errLeft $ fetchAccessToken manager oa' $ ExchangeToken code
+      errLeft $ tryFetchCreds $ getCreds manager token
+
+    fetchStripeConnectCreds oa csrf code manager = do
+      stripe <- errLeft $ liftIO $ StripeToken.fetch oa csrf code manager
+      let token = OAuth2Token (AccessToken $ StripeToken.accessToken stripe) (Just $ RefreshToken $ StripeToken.refreshToken stripe) Nothing (Just $ StripeToken.tokenType stripe) Nothing
+      errLeft $ tryFetchCreds $ getCreds manager token
+      -- pure $ Creds "stripe_connect" (StripeToken.stripeUserId stripe) (StripeToken.stripeExtra stripe)
 
 redirectMessage :: Text -> AuthHandler m a
 redirectMessage msg = do
